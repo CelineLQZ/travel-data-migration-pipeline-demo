@@ -183,7 +183,7 @@ booking_demo/
 
 ```bash
 git clone <repo-url>
-cd booking_demo
+cd <your project>
 cp .env.example .env
 ```
 
