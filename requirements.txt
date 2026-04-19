@@ -1,0 +1,11 @@
+# requirements.txt
+# Local development dependencies
+# (Airflow and Spark are managed inside Docker / EMR — not installed locally)
+
+faker
+pandas
+pyarrow
+boto3
+snowflake-connector-python
+plotly
+pyspark

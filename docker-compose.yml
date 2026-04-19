@@ -1,0 +1,138 @@
+# docker-compose.yml
+# -------------------
+# Airflow 2.8 with LocalExecutor (no Celery/Redis needed for a demo).
+# Services: postgres (metadata DB), airflow-init (DB setup), webserver, scheduler.
+#
+# Usage:
+#   1. Copy .env.example to .env and fill in your values
+#   2. docker-compose up airflow-init    # first-time DB setup (wait for exit 0)
+#   3. docker-compose up -d              # start webserver + scheduler
+#   4. Open http://localhost:8080  (login: admin / admin)
+#   5. Trigger the travel_migration_demo DAG
+
+version: '3.8'
+
+# Shared config block — referenced by all Airflow services
+x-airflow-common:
+  &airflow-common
+  image: apache/airflow:2.8.1
+  environment:
+    &airflow-common-env
+
+    # Use LocalExecutor — simpler than Celery, fine for a single-machine demo
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+
+    # Install extra packages at container startup (no custom Docker image needed)
+    _PIP_ADDITIONAL_REQUIREMENTS: >-
+      apache-airflow-providers-amazon==8.13.0
+      snowflake-connector-python==3.6.0
+      boto3
+      pandas
+      pyarrow
+      plotly
+      faker
+
+    # AWS credentials (from .env file)
+    AWS_ACCESS_KEY_ID:     ${AWS_ACCESS_KEY_ID}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+    AWS_DEFAULT_REGION:    ${AWS_DEFAULT_REGION}
+    S3_BUCKET:             ${S3_BUCKET}
+
+    # EMR Serverless (from .env file)
+    EMR_APP_ID:             ${EMR_APP_ID}
+    EMR_EXECUTION_ROLE_ARN: ${EMR_EXECUTION_ROLE_ARN}
+
+    # Snowflake (from .env file)
+    SNOWFLAKE_ACCOUNT:  ${SNOWFLAKE_ACCOUNT}
+    SNOWFLAKE_USER:     ${SNOWFLAKE_USER}
+    SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD}
+
+    # Airflow connections — set via env so no manual UI setup is needed
+    AIRFLOW_CONN_AWS_DEFAULT: >-
+      aws://${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}@?region_name=eu-north-1
+    AIRFLOW_CONN_SNOWFLAKE_DEFAULT: >-
+      snowflake://${SNOWFLAKE_USER}:${SNOWFLAKE_PASSWORD}@${SNOWFLAKE_ACCOUNT}
+
+  volumes:
+    # Mount project directories so the DAG can import local Python modules
+    - ./dags:/opt/airflow/dags
+    - ./data_generator:/opt/airflow/data_generator
+    - ./ingestion:/opt/airflow/ingestion
+    - ./spark_jobs:/opt/airflow/spark_jobs
+    - ./validation:/opt/airflow/validation
+    - ./monitoring:/opt/airflow/monitoring
+    - ./local:/opt/airflow/local
+    - ./logs:/opt/airflow/logs
+
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+
+services:
+
+  # --------------------------------------------------------------------------
+  # PostgreSQL — stores Airflow metadata (DAG runs, task states, logs)
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER:     airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB:       airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  # --------------------------------------------------------------------------
+  # airflow-init — runs once to initialise the DB and create the admin user
+  # Run: docker-compose up airflow-init
+  # Wait for "exited with code 0" before starting the other services.
+  # --------------------------------------------------------------------------
+  airflow-init:
+    <<: *airflow-common
+    command: >
+      bash -c "
+        airflow db init &&
+        airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com
+      "
+    environment:
+      <<: *airflow-common-env
+    restart: "no"
+
+  # --------------------------------------------------------------------------
+  # Airflow webserver — UI at http://localhost:8080
+  # --------------------------------------------------------------------------
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: always
+
+  # --------------------------------------------------------------------------
+  # Airflow scheduler — picks up DAG runs and schedules tasks
+  # --------------------------------------------------------------------------
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: always
+
+
+volumes:
+  postgres_data:

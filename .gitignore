@@ -1,0 +1,27 @@
+# Environment
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Airflow
+logs/
+airflow.db
+airflow.cfg
+
+# Generated data (re-run generate_data.py to recreate)
+local/
+
+# Terraform state (contains sensitive outputs)
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
